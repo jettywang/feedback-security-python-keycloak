@@ -1,0 +1,25 @@
+{
+  "export_meta": {
+    "tool": "fixture (bypassable MFA, mirrors the Keycloak default browser flow)",
+    "exported_at": "2026-11-13T00:00:00+00:00",
+    "realm": "fixture-realm-b"
+  },
+  "flows": [
+    {"id": "flow-browser", "alias": "browser", "providerId": "basic-flow", "topLevel": true, "builtIn": false},
+    {"id": "flow-forms", "alias": "browser-forms", "providerId": "basic-flow", "topLevel": false, "builtIn": false},
+    {"id": "flow-otp", "alias": "browser-conditional-otp", "providerId": "basic-flow", "topLevel": false, "builtIn": false}
+  ],
+  "executions": {
+    "browser": [
+      {"id": "e1", "requirement": "ALTERNATIVE", "displayName": "forms", "alias": "browser-forms", "authenticationFlow": true, "flowId": "flow-forms", "level": 0, "index": 0}
+    ],
+    "browser-forms": [
+      {"id": "e2", "requirement": "REQUIRED", "displayName": "Username Password Form", "providerId": "auth-username-password-form", "authenticationFlow": false, "level": 0, "index": 0},
+      {"id": "e3", "requirement": "CONDITIONAL", "displayName": "Browser - Conditional OTP", "alias": "browser-conditional-otp", "authenticationFlow": true, "flowId": "flow-otp", "level": 0, "index": 1}
+    ],
+    "browser-conditional-otp": [
+      {"id": "e4", "requirement": "REQUIRED", "displayName": "Condition - user configured", "providerId": "conditional-user-configured", "authenticationFlow": false, "level": 0, "index": 0},
+      {"id": "e5", "requirement": "REQUIRED", "displayName": "OTP Form", "providerId": "auth-otp-form", "authenticationFlow": false, "level": 0, "index": 1}
+    ]
+  }
+}

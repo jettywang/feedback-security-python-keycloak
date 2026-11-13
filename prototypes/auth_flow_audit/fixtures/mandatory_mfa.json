@@ -1,0 +1,21 @@
+{
+  "export_meta": {
+    "tool": "fixture (mandatory MFA)",
+    "exported_at": "2026-11-13T00:00:00+00:00",
+    "realm": "fixture-realm-a"
+  },
+  "flows": [
+    {"id": "flow-browser", "alias": "browser", "providerId": "basic-flow", "topLevel": true, "builtIn": false},
+    {"id": "flow-forms", "alias": "browser-forms", "providerId": "basic-flow", "topLevel": false, "builtIn": false}
+  ],
+  "executions": {
+    "browser": [
+      {"id": "e1", "requirement": "REQUIRED", "displayName": "forms", "alias": "browser-forms", "authenticationFlow": true, "flowId": "flow-forms", "level": 0, "index": 0},
+      {"id": "e2", "requirement": "REQUIRED", "displayName": "OTP Form", "providerId": "auth-otp-form", "authenticationFlow": false, "level": 0, "index": 1},
+      {"id": "e3", "requirement": "DISABLED", "displayName": "Kerberos", "providerId": "auth-spnego", "authenticationFlow": false, "level": 0, "index": 2}
+    ],
+    "browser-forms": [
+      {"id": "e4", "requirement": "REQUIRED", "displayName": "Username Password Form", "providerId": "auth-username-password-form", "authenticationFlow": false, "level": 0, "index": 0}
+    ]
+  }
+}
