@@ -27,7 +27,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 from typing import Any
 
@@ -7565,16 +7564,11 @@ class KeycloakAdmin:
             "attr": "jwt.credential",
         }
         m = MultipartEncoder(fields={"keystoreFormat": "Certificate PEM", "file": certcont})
-        orig_headers = copy.deepcopy(self.connection.headers or {})
-        new_headers = copy.deepcopy(orig_headers)
-        new_headers["Content-Type"] = m.content_type
-        self.connection.headers = new_headers
         data_raw = self.connection.raw_post(
             urls_patterns.URL_ADMIN_CLIENT_CERT_UPLOAD.format(**params_path),
             data=m,
-            headers=new_headers,
+            headers={"Content-Type": m.content_type},
         )
-        self.connection.headers = orig_headers
         res = raise_error_from_response(data_raw, KeycloakPostError)
         if not isinstance(res, dict):
             msg = (
@@ -14389,16 +14383,11 @@ class KeycloakAdmin:
             "attr": "jwt.credential",
         }
         m = MultipartEncoder(fields={"keystoreFormat": "Certificate PEM", "file": certcont})
-        orig_headers = copy.deepcopy(self.connection.headers or {})
-        new_headers = copy.deepcopy(orig_headers)
-        new_headers["Content-Type"] = m.content_type
-        self.connection.headers = new_headers
         data_raw = await self.connection.a_raw_post(
             urls_patterns.URL_ADMIN_CLIENT_CERT_UPLOAD.format(**params_path),
             data=m,
-            headers=new_headers,
+            headers={"Content-Type": m.content_type},
         )
-        self.connection.headers = orig_headers
         res = raise_error_from_response(data_raw, KeycloakPostError)
         if not isinstance(res, dict):
             msg = (

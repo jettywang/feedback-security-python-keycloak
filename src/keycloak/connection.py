@@ -263,7 +263,32 @@ class ConnectionManager:
 
     @headers.setter
     def headers(self, value: dict | None) -> None:
-        self._headers = value or {}
+        # Keep an isolated copy so callers cannot mutate the connection's
+        # identity headers through the dict they passed in.
+        self._headers = dict(value) if value else {}
+
+    def _request_headers(self, headers: dict | None = None) -> dict:
+        """
+        Build the headers for a single request.
+
+        The connection headers are never modified. A snapshot is taken so that
+        concurrent requests (or later mutations of the shared headers) cannot
+        change the identity used by an in-flight request.
+
+        :param headers: Per-request header overrides.
+        :type headers: dict | None
+        :returns: Headers to use for this request only.
+        :rtype: dict
+        """
+        merged = dict(self.headers or {})
+        if headers:
+            # Header names are case-insensitive: drop any variant already
+            # present before applying the override, so only one value is sent.
+            for key, value in headers.items():
+                for existing in [k for k in merged if k.lower() == key.lower()]:
+                    del merged[existing]
+                merged[key] = value
+        return merged
 
     def param_headers(self, key: str) -> str | None:
         """
@@ -317,12 +342,21 @@ class ConnectionManager:
 
         self.headers.pop(key, None)
 
-    def raw_get(self, path: str, **kwargs: Any) -> Response:  # noqa: ANN401
+    def raw_get(
+        self,
+        path: str,
+        headers: dict | None = None,
+        **kwargs: Any,  # noqa: ANN401
+    ) -> Response:
         """
         Submit get request to the path.
 
         :param path: Path for request.
         :type path: str
+        :param headers: Header overrides for this single request. They are
+            merged on top of a snapshot of the connection headers and never
+            stored on the connection.
+        :type headers: dict | None
         :param kwargs: Additional arguments
         :type kwargs: dict
         :returns: Response the request.
@@ -336,7 +370,7 @@ class ConnectionManager:
             return self._s.get(
                 urljoin(self.base_url, path),
                 params=kwargs,
-                headers=self.headers,
+                headers=self._request_headers(headers),
                 timeout=self.timeout,
                 verify=self.verify,
                 cert=self.cert,
@@ -345,7 +379,13 @@ class ConnectionManager:
             msg = "Can't connect to server"
             raise KeycloakConnectionError(msg) from e
 
-    def raw_post(self, path: str, data: dict | str | MultipartEncoder, **kwargs: Any) -> Response:  # noqa: ANN401
+    def raw_post(
+        self,
+        path: str,
+        data: dict | str | MultipartEncoder,
+        headers: dict | None = None,
+        **kwargs: Any,  # noqa: ANN401
+    ) -> Response:
         """
         Submit post request to the path.
 
@@ -353,6 +393,10 @@ class ConnectionManager:
         :type path: str
         :param data: Payload for request.
         :type data: dict | str | MultipartEncoder
+        :param headers: Header overrides for this single request. They are
+            merged on top of a snapshot of the connection headers and never
+            stored on the connection.
+        :type headers: dict | None
         :param kwargs: Additional arguments
         :type kwargs: dict
         :returns: Response the request.
@@ -367,7 +411,7 @@ class ConnectionManager:
                 urljoin(self.base_url, path),
                 params=kwargs,
                 data=data,
-                headers=self.headers,
+                headers=self._request_headers(headers),
                 timeout=self.timeout,
                 verify=self.verify,
                 cert=self.cert,
@@ -376,7 +420,13 @@ class ConnectionManager:
             msg = "Can't connect to server"
             raise KeycloakConnectionError(msg) from e
 
-    def raw_put(self, path: str, data: dict | str | MultipartEncoder, **kwargs: Any) -> Response:  # noqa: ANN401
+    def raw_put(
+        self,
+        path: str,
+        data: dict | str | MultipartEncoder,
+        headers: dict | None = None,
+        **kwargs: Any,  # noqa: ANN401
+    ) -> Response:
         """
         Submit put request to the path.
 
@@ -384,6 +434,10 @@ class ConnectionManager:
         :type path: str
         :param data: Payload for request.
         :type data: dict | str | MultipartEncoder
+        :param headers: Header overrides for this single request. They are
+            merged on top of a snapshot of the connection headers and never
+            stored on the connection.
+        :type headers: dict | None
         :param kwargs: Additional arguments
         :type kwargs: dict
         :returns: Response the request.
@@ -399,7 +453,7 @@ class ConnectionManager:
                 urljoin(self.base_url, path),
                 params=kwargs,
                 data=data,
-                headers=self.headers,
+                headers=self._request_headers(headers),
                 timeout=self.timeout,
                 verify=self.verify,
                 cert=self.cert,
@@ -408,7 +462,13 @@ class ConnectionManager:
             msg = "Can't connect to server"
             raise KeycloakConnectionError(msg) from e
 
-    def raw_delete(self, path: str, data: dict | None = None, **kwargs: Any) -> Response:  # noqa: ANN401
+    def raw_delete(
+        self,
+        path: str,
+        data: dict | None = None,
+        headers: dict | None = None,
+        **kwargs: Any,  # noqa: ANN401
+    ) -> Response:
         """
         Submit delete request to the path.
 
@@ -416,6 +476,10 @@ class ConnectionManager:
         :type path: str
         :param data: Payload for request.
         :type data: dict | None
+        :param headers: Header overrides for this single request. They are
+            merged on top of a snapshot of the connection headers and never
+            stored on the connection.
+        :type headers: dict | None
         :param kwargs: Additional arguments
         :type kwargs: dict
         :returns: Response the request.
@@ -431,7 +495,7 @@ class ConnectionManager:
                 urljoin(self.base_url, path),
                 params=kwargs,
                 data=data or {},
-                headers=self.headers,
+                headers=self._request_headers(headers),
                 timeout=self.timeout,
                 verify=self.verify,
                 cert=self.cert,
@@ -440,12 +504,21 @@ class ConnectionManager:
             msg = "Can't connect to server"
             raise KeycloakConnectionError(msg) from e
 
-    async def a_raw_get(self, path: str, **kwargs: Any) -> AsyncResponse:  # noqa: ANN401
+    async def a_raw_get(
+        self,
+        path: str,
+        headers: dict | None = None,
+        **kwargs: Any,  # noqa: ANN401
+    ) -> AsyncResponse:
         """
         Submit get request to the path.
 
         :param path: Path for request.
         :type path: str
+        :param headers: Header overrides for this single request. They are
+            merged on top of a snapshot of the connection headers and never
+            stored on the connection.
+        :type headers: dict | None
         :param kwargs: Additional arguments
         :type kwargs: dict
         :returns: Response the request.
@@ -460,7 +533,7 @@ class ConnectionManager:
             return await self.async_s.get(
                 urljoin(self.base_url, path),
                 params=self._filter_query_params(kwargs),
-                headers=self.headers,
+                headers=self._request_headers(headers),
                 timeout=self.timeout,
             )
         except Exception as e:
@@ -471,6 +544,7 @@ class ConnectionManager:
         self,
         path: str,
         data: dict | str | MultipartEncoder,
+        headers: dict | None = None,
         **kwargs: Any,  # noqa: ANN401
     ) -> AsyncResponse:
         """
@@ -480,6 +554,10 @@ class ConnectionManager:
         :type path: str
         :param data: Payload for request.
         :type data: dict | str | MultipartEncoder
+        :param headers: Header overrides for this single request. They are
+            merged on top of a snapshot of the connection headers and never
+            stored on the connection.
+        :type headers: dict | None
         :param kwargs: Additional arguments
         :type kwargs: dict
         :returns: Response the request.
@@ -496,7 +574,7 @@ class ConnectionManager:
                 url=urljoin(self.base_url, path),
                 params=self._filter_query_params(kwargs),
                 **self._prepare_httpx_request_content(data),
-                headers=self.headers,
+                headers=self._request_headers(headers),
                 timeout=self.timeout,
             )
         except Exception as e:
@@ -507,6 +585,7 @@ class ConnectionManager:
         self,
         path: str,
         data: dict | str | MultipartEncoder,
+        headers: dict | None = None,
         **kwargs: Any,  # noqa: ANN401
     ) -> AsyncResponse:
         """
@@ -516,6 +595,10 @@ class ConnectionManager:
         :type path: str
         :param data: Payload for request.
         :type data: dict | str | MultipartEncoder
+        :param headers: Header overrides for this single request. They are
+            merged on top of a snapshot of the connection headers and never
+            stored on the connection.
+        :type headers: dict | None
         :param kwargs: Additional arguments
         :type kwargs: dict
         :returns: Response the request.
@@ -531,7 +614,7 @@ class ConnectionManager:
                 urljoin(self.base_url, path),
                 params=self._filter_query_params(kwargs),
                 **self._prepare_httpx_request_content(data),
-                headers=self.headers,
+                headers=self._request_headers(headers),
                 timeout=self.timeout,
             )
         except Exception as e:
@@ -542,6 +625,7 @@ class ConnectionManager:
         self,
         path: str,
         data: dict | None = None,
+        headers: dict | None = None,
         **kwargs: Any,  # noqa: ANN401
     ) -> AsyncResponse:
         """
@@ -551,6 +635,10 @@ class ConnectionManager:
         :type path: str
         :param data: Payload for request.
         :type data: dict | None
+        :param headers: Header overrides for this single request. They are
+            merged on top of a snapshot of the connection headers and never
+            stored on the connection.
+        :type headers: dict | None
         :param kwargs: Additional arguments
         :type kwargs: dict
         :returns: Response the request.
@@ -567,7 +655,7 @@ class ConnectionManager:
                 url=urljoin(self.base_url, path),
                 **self._prepare_httpx_request_content(data or {}),
                 params=self._filter_query_params(kwargs),
-                headers=self.headers,
+                headers=self._request_headers(headers),
                 timeout=self.timeout,
             )
         except Exception as e:
