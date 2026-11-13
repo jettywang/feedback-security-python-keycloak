@@ -54,7 +54,13 @@ from .exceptions import (
     KeycloakRPTNotFound,
     raise_error_from_response,
 )
-from .uma_permissions import AuthStatus, build_permission_param
+from .uma_permissions import (
+    AuthStatus,
+    IdentityType,
+    build_permission_param,
+    evaluate_uma_access,
+    parse_permission_requests,
+)
 from .urls_patterns import (
     URL_AUTH,
     URL_CERTS,
@@ -959,25 +965,47 @@ class KeycloakOpenID:
         return res
 
     def has_uma_access(
-        self, token: str, permissions: str | list | dict | tuple | set
+        self,
+        token: str,
+        permissions: str | list | dict | tuple | set,
+        strict_id_mode: bool = False,
     ) -> AuthStatus:
         """
         Determine whether user has uma permissions with specified user token.
+
+        Requested permissions are matched against the server response while keeping the
+        distinction between resource ids (``rsid``) and resource names (``rsname``):
+
+        * In compatibility mode (``strict_id_mode=False``, default) a permission labeled by
+          :class:`~keycloak.uma_permissions.IdentityType.RSID` is compared with ``rsid`` and
+          one labeled ``RSNAME`` with ``rsname``. Plain string inputs are treated as resource
+          names to preserve the historical behavior.
+        * In strict id mode (``strict_id_mode=True``) every requested resource is compared
+          with ``rsid`` only, so a resource whose display name collides with another
+          resource's id can never grant access to that other resource.
+
+        Resource-level grants (no scopes) only satisfy resource-level requests and scoped
+        grants only satisfy matching scopes, meaning the two never overwrite each other.
+        ``missing_permissions`` keeps the original request strings and their id/name identity
+        type so callers can explain the denial.
 
         :param token: user token
         :type token: str
         :param permissions: list of uma permissions (resource:scope)
         :type permissions: str
+        :param strict_id_mode: Compare every requested resource against ``rsid`` only
+        :type strict_id_mode: bool
         :return: Authentication status
         :rtype: AuthStatus
         :raises KeycloakAuthenticationError: In case of failed authentication
         :raises KeycloakPostError: In case of failed request to Keycloak
         """
-        needed = build_permission_param(permissions)
+        default_identity = IdentityType.RSID if strict_id_mode else IdentityType.RSNAME
+        needed = parse_permission_requests(permissions, default_identity)
         try:
             granted = self.uma_permissions(token, permissions)
         except (KeycloakPostError, KeycloakAuthenticationError) as e:
-            if e.response_code == HTTP_FORBIDDEN:  # pragma: no cover
+            if e.response_code == HTTP_FORBIDDEN:
                 return AuthStatus(
                     is_logged_in=True,
                     is_authorized=False,
@@ -991,19 +1019,12 @@ class KeycloakOpenID:
                 )
             raise
 
-        for resource_struct in granted:
-            for resource in (resource_struct["rsname"], resource_struct["rsid"]):
-                scopes = resource_struct.get("scopes", None)
-                if not scopes:
-                    needed.discard(resource)
-                    continue
-                for scope in scopes:  # pragma: no cover
-                    needed.discard(f"{resource}#{scope}")
+        missing = evaluate_uma_access(needed, granted, strict_id_mode=strict_id_mode)
 
         return AuthStatus(
             is_logged_in=True,
-            is_authorized=len(needed) == 0,
-            missing_permissions=needed,
+            is_authorized=len(missing) == 0,
+            missing_permissions=missing,
         )
 
     def register_client(self, token: str, payload: dict) -> dict:
@@ -1820,25 +1841,35 @@ class KeycloakOpenID:
         return res
 
     async def a_has_uma_access(
-        self, token: str, permissions: str | list | dict | tuple | set
+        self,
+        token: str,
+        permissions: str | list | dict | tuple | set,
+        strict_id_mode: bool = False,
     ) -> AuthStatus:
         """
         Determine whether user has uma permissions with specified user token asynchronously.
+
+        This is the asynchronous counterpart of :meth:`has_uma_access` and delegates the
+        permission comparison to the same shared engine, therefore both methods return
+        identical results for identical inputs.
 
         :param token: user token
         :type token: str
         :param permissions: list of uma permissions (resource:scope)
         :type permissions: str
+        :param strict_id_mode: Compare every requested resource against ``rsid`` only
+        :type strict_id_mode: bool
         :return: Authentication status
         :rtype: AuthStatus
         :raises KeycloakAuthenticationError: In case of failed authentication
         :raises KeycloakPostError: In case of failed request to Keycloak
         """
-        needed = build_permission_param(permissions)
+        default_identity = IdentityType.RSID if strict_id_mode else IdentityType.RSNAME
+        needed = parse_permission_requests(permissions, default_identity)
         try:
             granted = await self.a_uma_permissions(token, permissions)
         except (KeycloakPostError, KeycloakAuthenticationError) as e:
-            if e.response_code == HTTP_FORBIDDEN:  # pragma: no cover
+            if e.response_code == HTTP_FORBIDDEN:
                 return AuthStatus(
                     is_logged_in=True,
                     is_authorized=False,
@@ -1852,19 +1883,12 @@ class KeycloakOpenID:
                 )
             raise
 
-        for resource_struct in granted:
-            for resource in (resource_struct["rsname"], resource_struct["rsid"]):
-                scopes = resource_struct.get("scopes", None)
-                if not scopes:
-                    needed.discard(resource)
-                    continue
-                for scope in scopes:  # pragma: no cover
-                    needed.discard(f"{resource}#{scope}")
+        missing = evaluate_uma_access(needed, granted, strict_id_mode=strict_id_mode)
 
         return AuthStatus(
             is_logged_in=True,
-            is_authorized=len(needed) == 0,
-            missing_permissions=needed,
+            is_authorized=len(missing) == 0,
+            missing_permissions=missing,
         )
 
     async def a_register_client(self, token: str, payload: dict) -> dict:

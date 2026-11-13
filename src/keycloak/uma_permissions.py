@@ -24,7 +24,23 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
 from keycloak.exceptions import KeycloakPermissionFormatError
+
+
+class IdentityType(Enum):
+    """
+    Identify whether a permission request references a resource by its id or its name.
+
+    Keycloak answers UMA permission tickets with both ``rsid`` (the resource id) and
+    ``rsname`` (the resource display name). A requested permission can target either one,
+    so the identity type is required to disambiguate them when a resource name happens to
+    equal another resource id.
+    """
+
+    RSID = "rsid"
+    RSNAME = "rsname"
 
 
 class UMAPermission:
@@ -193,6 +209,80 @@ class Scope(UMAPermission):
         super().__init__(scope=scope)
 
 
+class PermissionRequest(UMAPermission):
+    """
+    A requested UMA permission that remembers whether it targets an ``rsid`` or ``rsname``.
+
+    The textual permission (``resource`` or ``resource#scope``) is kept identical to the
+    wire format, which means the object is interchangeable with the plain string used by
+    :func:`build_permission_param`. The :attr:`identity_type` additionally records how the
+    resource component must be interpreted when matching a server response, allowing the
+    resource name/id collision case to be handled deterministically.
+
+    :param resource: Resource id or resource name
+    :type resource: str
+    :param scope: Scope
+    :type scope: str
+    :param identity_type: Whether the resource is an id (``rsid``) or a name (``rsname``)
+    :type identity_type: IdentityType
+    """
+
+    def __init__(
+        self,
+        resource: str,
+        scope: str = "",
+        identity_type: IdentityType = IdentityType.RSNAME,
+    ) -> None:
+        """
+        Init method.
+
+        :param resource: Resource id or resource name
+        :type resource: str
+        :param scope: Scope
+        :type scope: str
+        :param identity_type: Whether the resource is an id (``rsid``) or a name (``rsname``)
+        :type identity_type: IdentityType
+        """
+        super().__init__(resource=str(resource), scope=str(scope))
+        self.identity_type = identity_type
+
+    @classmethod
+    def from_string(
+        cls,
+        permission: str,
+        identity_type: IdentityType,
+    ) -> PermissionRequest:
+        """
+        Build a permission request from the ``resource`` / ``resource#scope`` wire format.
+
+        :param permission: Textual permission, optionally carrying a ``#scope`` suffix
+        :type permission: str
+        :param identity_type: Whether the resource component is an id or a name
+        :type identity_type: IdentityType
+        :returns: The typed permission request
+        :rtype: PermissionRequest
+        """
+        resource, separator, scope = permission.partition("#")
+        return cls(
+            resource=resource,
+            scope=scope if separator else "",
+            identity_type=identity_type,
+        )
+
+    def __repr__(self) -> str:
+        """
+        Repr method.
+
+        Kept identical to the plain string representation (including the surrounding quotes
+        used by container repr) so that sets of permission requests render exactly like the
+        sets of strings produced by :func:`build_permission_param`.
+
+        :returns: The object representation
+        :rtype: str
+        """
+        return repr(str(self))
+
+
 class AuthStatus:
     """
     A class that represents the authorization/login status of a user associated with a token.
@@ -299,3 +389,203 @@ def build_permission_param(
             raise KeycloakPermissionFormatError(msg)
         result.add(str(permission))
     return result
+
+
+def parse_permission_requests(
+    permissions: str | list | dict | UMAPermission | None | tuple | set,
+    default_identity: IdentityType,
+) -> set[PermissionRequest]:
+    """
+    Parse the accepted permission inputs into typed :class:`PermissionRequest` objects.
+
+    The accepted shapes are the same as :func:`build_permission_param`. Each textual
+    permission is wrapped in a :class:`PermissionRequest` carrying an identity type:
+
+    * an already typed :class:`PermissionRequest` keeps its own identity;
+    * a plain string (or a generic :class:`UMAPermission`) receives ``default_identity``;
+    * a dictionary resource key receives ``default_identity`` for every generated scope.
+
+    Returning a set keeps the de-duplication semantics of the textual representation, so
+    repeated permission items collapse deterministically and the first encountered identity
+    wins for equal textual permissions.
+
+    :param permissions: Permissions in any shape accepted by :func:`build_permission_param`
+    :type permissions: str | Iterable[str] | dict[str, str] | dict[str, Iterable[str]]
+    :param default_identity: Identity assigned to inputs that do not carry one explicitly
+    :type default_identity: IdentityType
+    :returns: Typed permission requests
+    :rtype: set[PermissionRequest]
+    :raises KeycloakPermissionFormatError: In case of bad permission format
+    """
+    if permissions is None or permissions == "":
+        return set()
+    if isinstance(permissions, PermissionRequest):
+        return {permissions}
+    if isinstance(permissions, str):
+        return {PermissionRequest.from_string(permissions, default_identity)}
+    if isinstance(permissions, UMAPermission):
+        return {
+            PermissionRequest(
+                resource=permissions.resource,
+                scope=permissions.scope,
+                identity_type=default_identity,
+            ),
+        }
+    if isinstance(permissions, (list, tuple, set)):
+        result: set[PermissionRequest] = set()
+        for permission in permissions:
+            if isinstance(permission, PermissionRequest):
+                result.add(permission)
+            elif isinstance(permission, UMAPermission):
+                result.add(
+                    PermissionRequest(
+                        resource=permission.resource,
+                        scope=permission.scope,
+                        identity_type=default_identity,
+                    ),
+                )
+            elif isinstance(permission, str):
+                result.add(PermissionRequest.from_string(permission, default_identity))
+            else:
+                msg = f"misbuilt permission {permissions}"
+                raise KeycloakPermissionFormatError(msg)
+        return result
+
+    try:  # treat as dictionary of permissions
+        result = set()
+        for resource, scopes in permissions.items():
+            if scopes is None:
+                result.add(
+                    PermissionRequest(resource=str(resource), identity_type=default_identity),
+                )
+            elif isinstance(scopes, str):
+                result.add(
+                    PermissionRequest(
+                        resource=str(resource),
+                        scope=scopes,
+                        identity_type=default_identity,
+                    ),
+                )
+            else:
+                try:
+                    for scope in scopes:
+                        if not isinstance(scope, str):
+                            msg = f"misbuilt permission {permissions}"
+                            raise KeycloakPermissionFormatError(msg)
+                        result.add(
+                            PermissionRequest(
+                                resource=str(resource),
+                                scope=scope,
+                                identity_type=default_identity,
+                            ),
+                        )
+                except TypeError as e:
+                    msg = f"misbuilt permission {permissions}"
+                    raise KeycloakPermissionFormatError(msg) from e
+    except AttributeError:
+        pass
+    else:
+        return result
+
+    result = set()
+    for permission in permissions:
+        if not isinstance(permission, (str, UMAPermission)):
+            msg = f"misbuilt permission {permissions}"
+            raise KeycloakPermissionFormatError(msg)
+        if isinstance(permission, PermissionRequest):
+            result.add(permission)
+        elif isinstance(permission, UMAPermission):
+            result.add(
+                PermissionRequest(
+                    resource=permission.resource,
+                    scope=permission.scope,
+                    identity_type=default_identity,
+                ),
+            )
+        else:
+            result.add(PermissionRequest.from_string(permission, default_identity))
+    return result
+
+
+def _grant_matches_request(
+    request: PermissionRequest,
+    grant: dict,
+    strict_id_mode: bool,
+) -> bool:
+    """
+    Decide whether a single granted resource struct satisfies a single request.
+
+    A granted struct with no scopes (empty list, ``None`` or missing key) is a
+    resource-level grant and only satisfies a resource-level request. A granted struct with
+    scopes only satisfies a request carrying one of those exact scopes, so resource-level
+    and scope-based permissions can never satisfy each other.
+
+    In strict id mode the request resource is compared against ``rsid`` only, regardless of
+    how the request was labeled, which prevents a display-name collision from granting access
+    to a different resource. In compatibility mode an ``rsid`` request matches ``rsid`` and
+    an ``rsname`` request matches ``rsname``; missing or empty server fields never match.
+
+    :param request: The requested permission
+    :type request: PermissionRequest
+    :param grant: One entry of the Keycloak ``permissions`` response
+    :type grant: dict
+    :param strict_id_mode: Restrict every comparison to resource ids when ``True``
+    :type strict_id_mode: bool
+    :returns: Whether the grant satisfies the request
+    :rtype: bool
+    """
+    if strict_id_mode or request.identity_type == IdentityType.RSID:
+        granted_resource = grant.get("rsid")
+    else:
+        granted_resource = grant.get("rsname")
+
+    if not granted_resource or granted_resource != request.resource:
+        return False
+
+    granted_scopes = grant.get("scopes") or []
+
+    if not request.scope:
+        return not granted_scopes
+
+    return request.scope in granted_scopes
+
+
+def evaluate_uma_access(
+    requested: set[PermissionRequest],
+    granted: list,
+    strict_id_mode: bool = False,
+) -> set[PermissionRequest]:
+    """
+    Compute the requested permissions that no granted entry satisfies.
+
+    The function is shared by the synchronous and asynchronous clients, which guarantees
+    identical authorization results. It never mutates ``requested`` and never raises on an
+    incomplete server response: entries that are not dictionaries, that lack ``rsid`` or
+    ``rsname`` or that carry malformed scopes are simply unable to satisfy a request.
+
+    Repeated granted entries are handled idempotently: matching only removes requests from
+    the missing set, so duplicates cannot change the outcome.
+
+    :param requested: Typed permissions requested by the caller
+    :type requested: set[PermissionRequest]
+    :param granted: Keycloak ``permissions`` response entries
+    :type granted: list
+    :param strict_id_mode: Restrict every comparison to resource ids when ``True``
+    :type strict_id_mode: bool
+    :returns: The subset of ``requested`` that remains unsatisfied, identity types preserved
+    :rtype: set[PermissionRequest]
+    """
+    missing = set(requested)
+    if not missing:
+        return missing
+
+    for grant in granted:
+        if not isinstance(grant, dict):
+            continue
+        for request in tuple(missing):
+            if _grant_matches_request(request, grant, strict_id_mode):
+                missing.discard(request)
+        if not missing:
+            break
+
+    return missing

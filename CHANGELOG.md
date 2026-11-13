@@ -1,3 +1,9 @@
+## Unreleased
+
+### Feat
+
+- **uma**: distinguish rsid from rsname in `has_uma_access`/`a_has_uma_access` with an opt-in `strict_id_mode`, typed `PermissionRequest`/`IdentityType`, and deterministic handling of name/id collisions, empty scopes, duplicate grants and incomplete server responses
+
 ## v7.1.1 (2026-02-15)
 
 ### Fix

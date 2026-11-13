@@ -147,6 +147,35 @@ Get auth status for a specific resource and scope by token
     token = keycloak_openid.token("user", "password")
     auth_status = keycloak_openid.has_uma_access(token['access_token'], "Resource#Scope")
 
+Distinguish resource ids (rsid) from resource names (rsname)
+--------------------------------------------------------------------------
+
+A requested permission can reference a resource either by its id (``rsid``) or by its
+display name (``rsname``). This matters when one resource's display name happens to equal
+another resource's id. By default plain strings are treated as resource names, preserving
+the historical (compatibility) behavior. Pass ``strict_id_mode=True`` to compare every
+requested resource against ``rsid`` only, so a display-name collision can never grant access
+to a different resource. The ``missing_permissions`` of the returned ``AuthStatus`` keep both
+the original request strings and their id/name identity type.
+
+.. code-block:: python
+
+    from keycloak.uma_permissions import IdentityType, PermissionRequest
+
+    token = keycloak_openid.token("user", "password")
+
+    # Compatibility mode: "Resource" is matched against rsname (default for plain strings).
+    auth_status = keycloak_openid.has_uma_access(token['access_token'], "Resource")
+
+    # Strict id mode: "Resource" is matched against rsid only.
+    auth_status = keycloak_openid.has_uma_access(
+        token['access_token'], "Resource", strict_id_mode=True,
+    )
+
+    # Explicitly request by id, even in compatibility mode.
+    request = PermissionRequest(resource="7f3fd036...", identity_type=IdentityType.RSID)
+    auth_status = keycloak_openid.has_uma_access(token['access_token'], [request])
+
 PKCE Authorization Flow Example
 ----------------------------------------------
 

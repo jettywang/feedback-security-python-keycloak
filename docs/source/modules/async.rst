@@ -345,6 +345,27 @@ Get auth status asynchronously for a specific resource and scope by token
     token = await keycloak_openid.a_token("user", "password")
     auth_status = await keycloak_openid.a_has_uma_access(token['access_token'], "Resource#Scope")
 
+Get auth status asynchronously with strict resource id matching
+--------------------------------------------------------------------------
+
+.. code-block:: python
+
+    from keycloak.uma_permissions import IdentityType, PermissionRequest
+
+    token = await keycloak_openid.a_token("user", "password")
+
+    # Compatibility mode: plain strings are matched against rsname.
+    auth_status = await keycloak_openid.a_has_uma_access(token['access_token'], "Resource")
+
+    # Strict id mode: every requested resource is matched against rsid only.
+    auth_status = await keycloak_openid.a_has_uma_access(
+        token['access_token'], "Resource", strict_id_mode=True,
+    )
+
+    # Explicitly request by id, even in compatibility mode.
+    request = PermissionRequest(resource="7f3fd036...", identity_type=IdentityType.RSID)
+    auth_status = await keycloak_openid.a_has_uma_access(token['access_token'], [request])
+
 
 
 
