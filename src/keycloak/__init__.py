@@ -43,6 +43,13 @@ from .keycloak_admin import KeycloakAdmin
 from .keycloak_openid import KeycloakOpenID
 from .keycloak_uma import KeycloakUMA
 from .openid_connection import KeycloakOpenIDConnection
+from .uma_batch import (
+    UMABatchEntry,
+    UMABatchResult,
+    UMARequest,
+    UMARequestResult,
+    UMARequestStatus,
+)
 
 __all__ = [
     "ConnectionManager",
@@ -63,5 +70,10 @@ __all__ = [
     "KeycloakRPTNotFound",
     "KeycloakSecretNotFound",
     "KeycloakUMA",
+    "UMABatchEntry",
+    "UMABatchResult",
+    "UMARequest",
+    "UMARequestResult",
+    "UMARequestStatus",
     "__version__",
 ]

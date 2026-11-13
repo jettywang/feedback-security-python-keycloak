@@ -54,6 +54,13 @@ from .exceptions import (
     KeycloakRPTNotFound,
     raise_error_from_response,
 )
+from .uma_batch import (
+    UMABatchResult,
+    build_permission_strings,
+    evaluate_uma_batch,
+    merge_uma_requests,
+    normalize_uma_requests,
+)
 from .uma_permissions import AuthStatus, build_permission_param
 from .urls_patterns import (
     URL_AUTH,
@@ -1006,6 +1013,74 @@ class KeycloakOpenID:
             missing_permissions=needed,
         )
 
+    def permissions_batch(
+        self,
+        token: str,
+        permissions: list | tuple | set | dict | str | None,
+        **extra_payload: Any,  # noqa: ANN401
+    ) -> UMABatchResult:
+        """
+        Request UMA authorization for a batch and map it to every request.
+
+        This is the token-endpoint style: all merged requests travel in a
+        single ``response_mode=permissions`` call. Scope-level requests for
+        the same resource are merged; resource-level requests stay separate so
+        the grant can never be wider than requested. Empty input returns an
+        empty result without any network request.
+
+        :param token: User bearer token.
+        :type token: str
+        :param permissions: Raw permission requests.
+        :type permissions: list | tuple | set | dict | str | None
+        :param extra_payload: Additional payload data.
+        :type extra_payload: dict
+        :returns: Per-request outcomes, extra permissions and request count.
+        :rtype: UMABatchResult
+        """
+        requests = normalize_uma_requests(permissions)
+        if not requests:
+            return UMABatchResult(results=[], entries=(), network_requests=0)
+
+        entries = merge_uma_requests(requests)
+        params_path = {"realm-name": self.realm_name}
+        payload = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:uma-ticket",
+            "permission": build_permission_strings(entries),
+            "response_mode": "permissions",
+            "audience": self.client_id,
+            **extra_payload,
+        }
+
+        orig_bearer = (self.connection.headers or {}).get("Authorization")
+        self.connection.add_param_headers("Authorization", "Bearer " + token)
+        content_type = (self.connection.headers or {}).get("Content-Type")
+        self.connection.add_param_headers("Content-Type", "application/x-www-form-urlencoded")
+        data_raw = self.connection.raw_post(URL_TOKEN.format(**params_path), data=payload)
+        (
+            self.connection.add_param_headers("Content-Type", content_type)
+            if content_type
+            else self.connection.del_param_headers("Content-Type")
+        )
+        (
+            self.connection.add_param_headers("Authorization", orig_bearer)
+            if orig_bearer is not None
+            else self.connection.del_param_headers("Authorization")
+        )
+        res = raise_error_from_response(data_raw, KeycloakPostError)
+        if not isinstance(res, list):
+            msg = (
+                "Unexpected response type. Expected 'list', received "
+                f"'{type(res)}', value '{res}'."
+            )
+            raise TypeError(msg)
+
+        return evaluate_uma_batch(
+            requests,
+            entries,
+            res,
+            network_requests=1,
+        )
+
     def register_client(self, token: str, payload: dict) -> dict:
         """
         Create a client.
@@ -1865,6 +1940,72 @@ class KeycloakOpenID:
             is_logged_in=True,
             is_authorized=len(needed) == 0,
             missing_permissions=needed,
+        )
+
+    async def a_permissions_batch(
+        self,
+        token: str,
+        permissions: list | tuple | set | dict | str | None,
+        **extra_payload: Any,  # noqa: ANN401
+    ) -> UMABatchResult:
+        """
+        Request UMA authorization for a batch and map it to every request.
+
+        Asynchronous counterpart of :meth:`permissions_batch` using the token
+        endpoint ``response_mode=permissions`` style. Empty input performs no
+        network request.
+
+        :param token: User bearer token.
+        :type token: str
+        :param permissions: Raw permission requests.
+        :type permissions: list | tuple | set | dict | str | None
+        :param extra_payload: Additional payload data.
+        :type extra_payload: dict
+        :returns: Per-request outcomes, extra permissions and request count.
+        :rtype: UMABatchResult
+        """
+        requests = normalize_uma_requests(permissions)
+        if not requests:
+            return UMABatchResult(results=[], entries=(), network_requests=0)
+
+        entries = merge_uma_requests(requests)
+        params_path = {"realm-name": self.realm_name}
+        payload = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:uma-ticket",
+            "permission": build_permission_strings(entries),
+            "response_mode": "permissions",
+            "audience": self.client_id,
+            **extra_payload,
+        }
+
+        orig_bearer = (self.connection.headers or {}).get("Authorization")
+        self.connection.add_param_headers("Authorization", "Bearer " + token)
+        content_type = (self.connection.headers or {}).get("Content-Type")
+        self.connection.add_param_headers("Content-Type", "application/x-www-form-urlencoded")
+        data_raw = await self.connection.a_raw_post(URL_TOKEN.format(**params_path), data=payload)
+        (
+            self.connection.add_param_headers("Content-Type", content_type)
+            if content_type
+            else self.connection.del_param_headers("Content-Type")
+        )
+        (
+            self.connection.add_param_headers("Authorization", orig_bearer)
+            if orig_bearer is not None
+            else self.connection.del_param_headers("Authorization")
+        )
+        res = raise_error_from_response(data_raw, KeycloakPostError)
+        if not isinstance(res, list):
+            msg = (
+                "Unexpected response type. Expected 'list', received "
+                f"'{type(res)}', value '{res}'."
+            )
+            raise TypeError(msg)
+
+        return evaluate_uma_batch(
+            requests,
+            entries,
+            res,
+            network_requests=1,
         )
 
     async def a_register_client(self, token: str, payload: dict) -> dict:

@@ -44,12 +44,20 @@ from .exceptions import (
     KeycloakPutError,
     raise_error_from_response,
 )
+from .uma_batch import (
+    UMABatchResult,
+    build_ticket_payload,
+    evaluate_uma_batch,
+    merge_uma_requests,
+    normalize_uma_requests,
+)
 from .urls_patterns import URL_UMA_WELL_KNOWN
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator, Iterable
 
     from .openid_connection import KeycloakOpenIDConnection
+    from .uma_batch import UMABatchEntry, UMARequest
     from .uma_permissions import UMAPermission
 
 
@@ -418,6 +426,188 @@ class KeycloakUMA:
             raise TypeError(msg)
 
         return res
+
+    def _prepare_permission_batch(
+        self,
+        permissions: Iterable[UMAPermission | dict | tuple | str],
+    ) -> tuple[tuple[UMARequest, ...], tuple[UMABatchEntry, ...], list]:
+        requests = normalize_uma_requests(permissions)
+        if not requests:
+            return requests, (), []
+
+        entries = merge_uma_requests(requests)
+        resolved: list[UMABatchEntry] = []
+        for entry in entries:
+            resolved_entry = entry
+            if entry.resource_id is None:
+                resource_ids = self.resource_set_list_ids(
+                    exact_name=True,
+                    name=entry.resource,
+                    first=0,
+                    maximum=1,
+                )
+                if not resource_ids:
+                    msg = "Invalid resource specified"
+                    raise KeycloakPostError(msg)
+                resolved_entry = type(entry)(
+                    key=entry.key,
+                    resource=entry.resource,
+                    resource_id=resource_ids[0],
+                    scopes=entry.scopes,
+                    member_indices=entry.member_indices,
+                )
+            resolved.append(resolved_entry)
+
+        return requests, tuple(resolved), build_ticket_payload(resolved)
+
+    def _exchange_permission_ticket(
+        self,
+        ticket: str,
+        token: str | None = None,
+        **extra_payload: Any,  # noqa: ANN401
+    ) -> list:
+        payload = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:uma-ticket",
+            "ticket": ticket,
+            **extra_payload,
+        }
+
+        if token is None:
+            data_raw = self.connection.raw_post(
+                self.uma_well_known["token_endpoint"],
+                data=payload,
+            )
+        else:
+            if self.connection.base_url is None:
+                msg = (
+                    "Unable to perform permission check without base_url set on "
+                    "the connection object."
+                )
+                raise AttributeError(msg)
+            connection = ConnectionManager(
+                base_url=self.connection.base_url,
+                timeout=self.connection.timeout,
+                verify=self.connection.verify,
+                proxies=self.connection.proxies,
+                cert=self.connection.cert,
+                max_retries=self.connection.max_retries,
+                pool_maxsize=self.connection.pool_maxsize,
+            )
+            connection.add_param_headers("Authorization", "Bearer " + token)
+            connection.add_param_headers(
+                "Content-Type",
+                "application/x-www-form-urlencoded",
+            )
+            data_raw = connection.raw_post(
+                self.uma_well_known["token_endpoint"],
+                data=payload,
+            )
+
+        res = raise_error_from_response(data_raw, KeycloakPostError)
+        if not isinstance(res, dict):
+            msg = (
+                "Unexpected response type. Expected 'dict', received "
+                f"'{type(res)}', value '{res}'."
+            )
+            raise TypeError(msg)
+        return res.get("authorization_permissions", [])
+
+    def permission_ticket_batch(
+        self,
+        permissions: Iterable[UMAPermission | dict | tuple | str],
+    ) -> UMABatchResult:
+        """
+        Create one permission ticket for a batch of permission requests.
+
+        Overlapping scope-level requests for the same resource are merged,
+        while resource-level requests are kept separate so the authorization
+        can never be wider than requested. Empty input performs no network
+        request and returns an empty result.
+
+        :param permissions: Raw permission requests.
+        :type permissions: Iterable[UMAPermission | dict | tuple | str]
+        :returns: Batch result containing the merged entries and ticket. The
+            per-request ``results`` list is empty because the ticket endpoint
+            does not evaluate the request.
+        :rtype: UMABatchResult
+        :raises KeycloakPostError: In case permission resource not found
+        """
+        requests, entries, payload = self._prepare_permission_batch(permissions)
+        if not requests:
+            return UMABatchResult(results=[], entries=(), network_requests=0)
+
+        data_raw = self.connection.raw_post(
+            self.uma_well_known["permission_endpoint"],
+            data=json.dumps(payload),
+        )
+        res = raise_error_from_response(data_raw, KeycloakPostError)
+        if not isinstance(res, dict):
+            msg = (
+                "Unexpected response type. Expected 'dict', received "
+                f"'{type(res)}', value '{res}'."
+            )
+            raise TypeError(msg)
+
+        return UMABatchResult(
+            results=[],
+            entries=entries,
+            network_requests=1,
+            ticket=res.get("ticket"),
+        )
+
+    def permissions_batch(
+        self,
+        permissions: Iterable[UMAPermission | dict | tuple | str],
+        token: str | None = None,
+        **extra_payload: Any,  # noqa: ANN401
+    ) -> UMABatchResult:
+        """
+        Authorize a batch and map the decision back to every original request.
+
+        A single permission-ticket request is sent and, when the server returns
+        granted permissions, the ticket is exchanged at the token endpoint so
+        the outcome of each original request can be computed. Resources or
+        scopes granted without being requested are reported separately and
+        never count as satisfying a request.
+
+        :param permissions: Raw permission requests.
+        :type permissions: Iterable[UMAPermission | dict | tuple | str]
+        :param token: Optional user bearer token for the token exchange.
+        :type token: str | None
+        :param extra_payload: Extra token endpoint payload fields.
+        :type extra_payload: dict
+        :returns: Per-request outcomes with merged entries and request counts.
+        :rtype: UMABatchResult
+        :raises KeycloakPostError: In case permission resource not found
+        """
+        requests, entries, payload = self._prepare_permission_batch(permissions)
+        if not requests:
+            return UMABatchResult(results=[], entries=(), network_requests=0)
+
+        data_raw = self.connection.raw_post(
+            self.uma_well_known["permission_endpoint"],
+            data=json.dumps(payload),
+        )
+        res = raise_error_from_response(data_raw, KeycloakPostError)
+        if not isinstance(res, dict):
+            msg = (
+                "Unexpected response type. Expected 'dict', received "
+                f"'{type(res)}', value '{res}'."
+            )
+            raise TypeError(msg)
+
+        ticket = res.get("ticket")
+        if not isinstance(ticket, str):
+            msg = "Permission endpoint response did not contain a ticket."
+            raise KeycloakPostError(msg)
+        granted = self._exchange_permission_ticket(ticket, token, **extra_payload)
+        return evaluate_uma_batch(
+            requests,
+            entries,
+            granted,
+            network_requests=2,
+            ticket=ticket,
+        )
 
     def permissions_check(
         self,
@@ -911,6 +1101,179 @@ class KeycloakUMA:
             raise TypeError(msg)
 
         return res
+
+    async def _a_prepare_permission_batch(
+        self,
+        permissions: Iterable[UMAPermission | dict | tuple | str],
+    ) -> tuple[tuple[UMARequest, ...], tuple[UMABatchEntry, ...], list]:
+        requests = normalize_uma_requests(permissions)
+        if not requests:
+            return requests, (), []
+
+        entries = merge_uma_requests(requests)
+        resolved: list[UMABatchEntry] = []
+        for entry in entries:
+            resolved_entry = entry
+            if entry.resource_id is None:
+                resource_ids = await self.a_resource_set_list_ids(
+                    exact_name=True,
+                    name=entry.resource,
+                    first=0,
+                    maximum=1,
+                )
+                if not resource_ids:
+                    msg = "Invalid resource specified"
+                    raise KeycloakPostError(msg)
+                resolved_entry = type(entry)(
+                    key=entry.key,
+                    resource=entry.resource,
+                    resource_id=resource_ids[0],
+                    scopes=entry.scopes,
+                    member_indices=entry.member_indices,
+                )
+            resolved.append(resolved_entry)
+
+        return requests, tuple(resolved), build_ticket_payload(resolved)
+
+    async def _a_exchange_permission_ticket(
+        self,
+        ticket: str,
+        token: str | None = None,
+        **extra_payload: Any,  # noqa: ANN401
+    ) -> list:
+        payload = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:uma-ticket",
+            "ticket": ticket,
+            **extra_payload,
+        }
+
+        if token is None:
+            data_raw = await self.connection.a_raw_post(
+                (await self.a_uma_well_known)["token_endpoint"],
+                data=payload,
+            )
+        else:
+            if self.connection.base_url is None:
+                msg = (
+                    "Unable to perform permission check without base_url set on "
+                    "the connection object."
+                )
+                raise AttributeError(msg)
+            connection = ConnectionManager(
+                base_url=self.connection.base_url,
+                timeout=self.connection.timeout,
+                verify=self.connection.verify,
+                proxies=self.connection.proxies,
+                cert=self.connection.cert,
+                max_retries=self.connection.max_retries,
+                pool_maxsize=self.connection.pool_maxsize,
+            )
+            connection.add_param_headers("Authorization", "Bearer " + token)
+            connection.add_param_headers(
+                "Content-Type",
+                "application/x-www-form-urlencoded",
+            )
+            data_raw = await connection.a_raw_post(
+                (await self.a_uma_well_known)["token_endpoint"],
+                data=payload,
+            )
+
+        res = raise_error_from_response(data_raw, KeycloakPostError)
+        if not isinstance(res, dict):
+            msg = (
+                "Unexpected response type. Expected 'dict', received "
+                f"'{type(res)}', value '{res}'."
+            )
+            raise TypeError(msg)
+        return res.get("authorization_permissions", [])
+
+    async def a_permission_ticket_batch(
+        self,
+        permissions: Iterable[UMAPermission | dict | tuple | str],
+    ) -> UMABatchResult:
+        """
+        Create one permission ticket for a batch asynchronously.
+
+        See :meth:`permission_ticket_batch` for the merging semantics.
+
+        :param permissions: Raw permission requests.
+        :type permissions: Iterable[UMAPermission | dict | tuple | str]
+        :returns: Batch result containing the merged entries and ticket.
+        :rtype: UMABatchResult
+        :raises KeycloakPostError: In case permission resource not found
+        """
+        requests, entries, payload = await self._a_prepare_permission_batch(permissions)
+        if not requests:
+            return UMABatchResult(results=[], entries=(), network_requests=0)
+
+        data_raw = await self.connection.a_raw_post(
+            (await self.a_uma_well_known)["permission_endpoint"],
+            data=json.dumps(payload),
+        )
+        res = raise_error_from_response(data_raw, KeycloakPostError)
+        if not isinstance(res, dict):
+            msg = (
+                "Unexpected response type. Expected 'dict', received "
+                f"'{type(res)}', value '{res}'."
+            )
+            raise TypeError(msg)
+
+        return UMABatchResult(
+            results=[],
+            entries=entries,
+            network_requests=1,
+            ticket=res.get("ticket"),
+        )
+
+    async def a_permissions_batch(
+        self,
+        permissions: Iterable[UMAPermission | dict | tuple | str],
+        token: str | None = None,
+        **extra_payload: Any,  # noqa: ANN401
+    ) -> UMABatchResult:
+        """
+        Authorize a batch and map the decision back asynchronously.
+
+        See :meth:`permissions_batch` for the mapping semantics.
+
+        :param permissions: Raw permission requests.
+        :type permissions: Iterable[UMAPermission | dict | tuple | str]
+        :param token: Optional user bearer token for the token exchange.
+        :type token: str | None
+        :param extra_payload: Extra token endpoint payload fields.
+        :type extra_payload: dict
+        :returns: Per-request outcomes with merged entries and request counts.
+        :rtype: UMABatchResult
+        :raises KeycloakPostError: In case permission resource not found
+        """
+        requests, entries, payload = await self._a_prepare_permission_batch(permissions)
+        if not requests:
+            return UMABatchResult(results=[], entries=(), network_requests=0)
+
+        data_raw = await self.connection.a_raw_post(
+            (await self.a_uma_well_known)["permission_endpoint"],
+            data=json.dumps(payload),
+        )
+        res = raise_error_from_response(data_raw, KeycloakPostError)
+        if not isinstance(res, dict):
+            msg = (
+                "Unexpected response type. Expected 'dict', received "
+                f"'{type(res)}', value '{res}'."
+            )
+            raise TypeError(msg)
+
+        ticket = res.get("ticket")
+        if not isinstance(ticket, str):
+            msg = "Permission endpoint response did not contain a ticket."
+            raise KeycloakPostError(msg)
+        granted = await self._a_exchange_permission_ticket(ticket, token, **extra_payload)
+        return evaluate_uma_batch(
+            requests,
+            entries,
+            granted,
+            network_requests=2,
+            ticket=ticket,
+        )
 
     async def a_permissions_check(
         self,

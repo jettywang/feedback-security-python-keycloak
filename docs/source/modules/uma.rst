@@ -58,3 +58,43 @@ Delete resource set
 .. code-block:: python
 
     uma.resource_set_delete(resource_id=resource_set["_id"])
+
+
+Batch permission requests
+-------------------------
+
+Several permission requests can be submitted together. Overlapping scope-level
+requests for the same resource are merged into one entry, while resource-level
+requests are kept separate so the requested authorization never gets widened.
+The response is mapped back to every original request, including duplicates,
+and grants that were not requested are reported separately as
+``extra_permissions``.
+
+Permission-ticket style (one ticket request plus a token exchange):
+
+.. code-block:: python
+
+    requests = [
+        {"resource": "reporting-api", "scopes": ["read", "write"]},
+        {"resource": "reporting-api", "scopes": ["read", "export"]},
+        {"resource": "billing-api"},
+    ]
+
+    result = keycloak_uma.permissions_batch(requests)
+    for item in result.results:
+        print(item.request.index, item.status.value, item.missing_scopes)
+    print(result.network_requests)      # 2
+    print(result.extra_permissions)    # grants nobody asked for
+
+Use ``permission_ticket_batch`` when only the ticket is needed.
+
+Token-endpoint style (a single ``response_mode=permissions`` request):
+
+.. code-block:: python
+
+    result = keycloak_openid.permissions_batch(token, requests)
+    print(result.network_requests)      # 1
+
+Asynchronous counterparts are available as ``a_permissions_batch`` and
+``a_permission_ticket_batch``. Empty input short-circuits without any network
+request.
