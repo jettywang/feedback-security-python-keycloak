@@ -1,0 +1,29 @@
+{
+  "allowRemoteResourceManagement": true,
+  "policyEnforcementMode": "ENFORCING",
+  "decisionStrategy": "UNANIMOUS",
+  "scopes": [],
+  "policies": [
+    {
+      "name": "eng-group",
+      "type": "group",
+      "logic": "POSITIVE",
+      "decisionStrategy": "UNANIMOUS",
+      "config": { "groups": "[\"g-engineering\"]" }
+    },
+    {
+      "name": "alice-role",
+      "type": "role",
+      "logic": "POSITIVE",
+      "decisionStrategy": "UNANIMOUS",
+      "config": { "roles": "[{\"id\":\"app/alice\",\"required\":true}]" }
+    },
+    {
+      "name": "read-doc",
+      "type": "resource",
+      "logic": "POSITIVE",
+      "decisionStrategy": "UNANIMOUS",
+      "config": { "applyPolicies": "[\"alice-role\",\"eng-group\"]", "resources": "[\"doc-1\"]" }
+    }
+  ]
+}

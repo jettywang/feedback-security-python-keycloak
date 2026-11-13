@@ -1,0 +1,22 @@
+{
+  "allowRemoteResourceManagement": true,
+  "policyEnforcementMode": "ENFORCING",
+  "decisionStrategy": "UNANIMOUS",
+  "scopes": [],
+  "policies": [
+    {
+      "name": "read-doc",
+      "type": "resource",
+      "logic": "POSITIVE",
+      "decisionStrategy": "UNANIMOUS",
+      "config": { "applyPolicies": "[\"alice-role\"]", "resources": "[\"doc-1\"]" }
+    },
+    {
+      "name": "alice-role",
+      "type": "role",
+      "logic": "POSITIVE",
+      "decisionStrategy": "UNANIMOUS",
+      "config": { "roles": "[{\"id\":\"app/alice\",\"required\":true}]" }
+    }
+  ]
+}
