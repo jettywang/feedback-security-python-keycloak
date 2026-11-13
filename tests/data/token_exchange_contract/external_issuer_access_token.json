@@ -1,0 +1,43 @@
+{
+  "description": "External IdP issuer token exchanged for an access token (confidential client)",
+  "server_url": "https://keycloak.contract.test",
+  "realm_name": "contract-realm",
+  "client_id": "broker-client",
+  "client_secret_key": "s3cr3t-value",
+  "call": {
+    "token": "external.access+token/with=chars",
+    "audience": "target-service",
+    "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+    "subject_issuer": "external-idp",
+    "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+    "scope": "openid profile"
+  },
+  "expected_form_sync": {
+    "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+    "client_id": "broker-client",
+    "client_secret": "s3cr3t-value",
+    "subject_token": "external.access+token/with=chars",
+    "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+    "subject_issuer": "external-idp",
+    "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+    "audience": "target-service",
+    "scope": "openid profile"
+  },
+  "expected_form_async": {
+    "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+    "client_id": "broker-client",
+    "client_secret": "s3cr3t-value",
+    "subject_token": "external.access+token/with=chars",
+    "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+    "subject_issuer": "external-idp",
+    "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+    "audience": "target-service",
+    "requested_subject": "",
+    "requested_issuer": "",
+    "scope": "openid profile"
+  },
+  "expected_encoded_pairs": {
+    "subject_token": "external.access%2Btoken%2Fwith%3Dchars",
+    "scope": "openid+profile"
+  }
+}

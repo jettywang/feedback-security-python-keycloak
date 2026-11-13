@@ -1,0 +1,30 @@
+{
+  "description": "Public client exchanging with all optional parameters defaulted",
+  "server_url": "https://keycloak.contract.test",
+  "realm_name": "contract-realm",
+  "client_id": "public-spa",
+  "client_secret_key": null,
+  "call": {
+    "token": "standalone-refresh-token"
+  },
+  "expected_form_sync": {
+    "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+    "client_id": "public-spa",
+    "subject_token": "standalone-refresh-token",
+    "requested_token_type": "urn:ietf:params:oauth:token-type:refresh_token",
+    "scope": "openid"
+  },
+  "expected_form_async": {
+    "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+    "client_id": "public-spa",
+    "subject_token": "standalone-refresh-token",
+    "subject_token_type": "",
+    "subject_issuer": "",
+    "requested_token_type": "urn:ietf:params:oauth:token-type:refresh_token",
+    "audience": "",
+    "requested_subject": "",
+    "requested_issuer": "",
+    "scope": "openid"
+  },
+  "expected_encoded_pairs": {}
+}

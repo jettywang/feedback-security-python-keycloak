@@ -1,0 +1,42 @@
+{
+  "description": "Explicit empty-string values must be sent as empty fields, not omitted",
+  "server_url": "https://keycloak.contract.test",
+  "realm_name": "contract-realm",
+  "client_id": "broker-client",
+  "client_secret_key": "s3cr3t-value",
+  "call": {
+    "token": "tok",
+    "audience": "",
+    "subject": "",
+    "subject_token_type": "",
+    "subject_issuer": "",
+    "requested_issuer": ""
+  },
+  "expected_form_sync": {
+    "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+    "client_id": "broker-client",
+    "client_secret": "s3cr3t-value",
+    "subject_token": "tok",
+    "subject_token_type": "",
+    "subject_issuer": "",
+    "requested_token_type": "urn:ietf:params:oauth:token-type:refresh_token",
+    "audience": "",
+    "requested_subject": "",
+    "requested_issuer": "",
+    "scope": "openid"
+  },
+  "expected_form_async": {
+    "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+    "client_id": "broker-client",
+    "client_secret": "s3cr3t-value",
+    "subject_token": "tok",
+    "subject_token_type": "",
+    "subject_issuer": "",
+    "requested_token_type": "urn:ietf:params:oauth:token-type:refresh_token",
+    "audience": "",
+    "requested_subject": "",
+    "requested_issuer": "",
+    "scope": "openid"
+  },
+  "expected_encoded_pairs": {}
+}

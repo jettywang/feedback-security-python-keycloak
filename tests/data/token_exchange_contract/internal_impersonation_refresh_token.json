@@ -1,0 +1,38 @@
+{
+  "description": "Internal user impersonation requesting the default refresh token (confidential client)",
+  "server_url": "https://keycloak.contract.test",
+  "realm_name": "contract-realm",
+  "client_id": "admin-cli",
+  "client_secret_key": "imp3rs0nate!",
+  "call": {
+    "token": "alice-access-token",
+    "audience": "admin-cli",
+    "subject": "alice"
+  },
+  "expected_form_sync": {
+    "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+    "client_id": "admin-cli",
+    "client_secret": "imp3rs0nate!",
+    "subject_token": "alice-access-token",
+    "requested_token_type": "urn:ietf:params:oauth:token-type:refresh_token",
+    "audience": "admin-cli",
+    "requested_subject": "alice",
+    "scope": "openid"
+  },
+  "expected_form_async": {
+    "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+    "client_id": "admin-cli",
+    "client_secret": "imp3rs0nate!",
+    "subject_token": "alice-access-token",
+    "subject_token_type": "",
+    "subject_issuer": "",
+    "requested_token_type": "urn:ietf:params:oauth:token-type:refresh_token",
+    "audience": "admin-cli",
+    "requested_subject": "alice",
+    "requested_issuer": "",
+    "scope": "openid"
+  },
+  "expected_encoded_pairs": {
+    "client_secret": "imp3rs0nate%21"
+  }
+}
