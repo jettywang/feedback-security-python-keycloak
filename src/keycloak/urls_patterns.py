@@ -37,6 +37,7 @@ URL_AUTH = (
     "&scope={scope}&state={state}&nonce={nonce}"
 )
 URL_DEVICE = "realms/{realm-name}/protocol/openid-connect/auth/device"
+URL_CIBA = "realms/{realm-name}/protocol/openid-connect/ext/ciba/auth"
 
 URL_CLIENT_REGISTRATION = URL_REALM + "/clients-registrations/default"
 URL_CLIENT_UPDATE = URL_CLIENT_REGISTRATION + "/{client-id}"

@@ -137,6 +137,34 @@ class KeycloakInvalidTokenError(KeycloakOperationError):
     """Keycloak invalid token exception."""
 
 
+class KeycloakCibaError(KeycloakOperationError):
+    """Base class for Client Initiated Backchannel Authentication (CIBA) errors."""
+
+
+class KeycloakCibaNotificationError(KeycloakCibaError):
+    """Raised when a CIBA ping notification cannot be authenticated or matched."""
+
+
+class KeycloakCibaTransactionError(KeycloakCibaError):
+    """Raised when a CIBA transaction is in a state that forbids the requested action."""
+
+
+class KeycloakCibaExpiredError(KeycloakCibaTransactionError):
+    """Raised when the CIBA authentication request has expired."""
+
+
+class KeycloakCibaDeniedError(KeycloakCibaTransactionError):
+    """Raised when the end user denied the CIBA authentication request."""
+
+
+class KeycloakCibaPendingError(KeycloakCibaTransactionError):
+    """Raised when the token is polled before the authentication has finished."""
+
+
+class KeycloakCibaUnknownResultError(KeycloakCibaTransactionError):
+    """Raised when the token exchange outcome cannot be determined and must be retried."""
+
+
 class KeycloakPermissionFormatError(KeycloakOperationError):
     """Keycloak permission format exception."""
 

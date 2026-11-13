@@ -58,6 +58,7 @@ from .uma_permissions import AuthStatus, build_permission_param
 from .urls_patterns import (
     URL_AUTH,
     URL_CERTS,
+    URL_CIBA,
     URL_CLIENT_REGISTRATION,
     URL_CLIENT_UPDATE,
     URL_DEVICE,
@@ -1085,6 +1086,82 @@ class KeycloakOpenID:
 
         return res
 
+    def ciba(
+        self,
+        login_hint: str | None = None,
+        login_hint_token: str | None = None,
+        id_token_hint: str | None = None,
+        scope: str = "openid",
+        binding_message: str | None = None,
+        requested_expiry: int | None = None,
+        **extra: Any,  # noqa: ANN401
+    ) -> dict:
+        """
+        Initiate a Client Initiated Backchannel Authentication (CIBA) request.
+
+        The backchannel authentication endpoint is used to start a decoupled
+        authentication. Exactly one of ``login_hint``, ``login_hint_token`` or
+        ``id_token_hint`` must be provided. In CIBA ping mode the server answers
+        with an ``auth_req_id`` and later calls the client notification endpoint;
+        the notification does not authenticate the user, it only allows polling
+        the token endpoint.
+
+        https://openid.net/specs/openid-client-initiated-backchannel-authentication-core-1_0.html
+
+        :param login_hint: Hint identifying the end user
+        :type login_hint: str
+        :param login_hint_token: Opaque token identifying the end user
+        :type login_hint_token: str
+        :param id_token_hint: ID token previously issued for the end user
+        :type id_token_hint: str
+        :param scope: Scope of the authorization request, split with a blank space
+        :type scope: str
+        :param binding_message: Message shown to the user on both devices
+        :type binding_message: str
+        :param requested_expiry: Requested lifetime of the auth_req_id in seconds
+        :type requested_expiry: int
+        :param extra: Additional extra arguments
+        :type extra: dict
+        :returns: Backchannel authentication response containing auth_req_id,
+            expires_in and interval
+        :rtype: dict
+        :raises ValueError: If none of the user identification hints is provided
+        """
+        hints = [login_hint, login_hint_token, id_token_hint]
+        if not any(hints):
+            msg = (
+                "One of 'login_hint', 'login_hint_token' or 'id_token_hint' is required "
+                "to start a CIBA authentication."
+            )
+            raise ValueError(msg)
+
+        params_path = {"realm-name": self.realm_name}
+        payload: dict[str, Any] = {"client_id": self.client_id, "scope": scope}
+        if login_hint is not None:
+            payload["login_hint"] = login_hint
+        if login_hint_token is not None:
+            payload["login_hint_token"] = login_hint_token
+        if id_token_hint is not None:
+            payload["id_token_hint"] = id_token_hint
+        if binding_message is not None:
+            payload["binding_message"] = binding_message
+        if requested_expiry is not None:
+            payload["requested_expiry"] = requested_expiry
+        if extra:
+            payload.update(extra)
+
+        payload = self._add_secret_key(payload)
+        data_raw = self.connection.raw_post(URL_CIBA.format(**params_path), data=payload)
+        res = raise_error_from_response(data_raw, KeycloakPostError)
+        if not isinstance(res, dict):
+            msg = (
+                "Unexpected response type from 'ciba'. Expected 'dict', received "
+                f"'{type(res)}', value '{res}'."
+            )
+            raise TypeError(msg)
+
+        return res
+
     def update_client(self, token: str, client_id: str, payload: dict) -> dict:
         """
         Update a client.
@@ -1940,6 +2017,82 @@ class KeycloakOpenID:
         if not isinstance(res, dict):
             msg = (
                 "Unexpected response type. Expected 'dict', received "
+                f"'{type(res)}', value '{res}'."
+            )
+            raise TypeError(msg)
+
+        return res
+
+    async def a_ciba(
+        self,
+        login_hint: str | None = None,
+        login_hint_token: str | None = None,
+        id_token_hint: str | None = None,
+        scope: str = "openid",
+        binding_message: str | None = None,
+        requested_expiry: int | None = None,
+        **extra: Any,  # noqa: ANN401
+    ) -> dict:
+        """
+        Initiate a CIBA request asynchronously.
+
+        The backchannel authentication endpoint is used to start a decoupled
+        authentication. Exactly one of ``login_hint``, ``login_hint_token`` or
+        ``id_token_hint`` must be provided. In CIBA ping mode the server answers
+        with an ``auth_req_id`` and later calls the client notification endpoint;
+        the notification does not authenticate the user, it only allows polling
+        the token endpoint.
+
+        https://openid.net/specs/openid-client-initiated-backchannel-authentication-core-1_0.html
+
+        :param login_hint: Hint identifying the end user
+        :type login_hint: str
+        :param login_hint_token: Opaque token identifying the end user
+        :type login_hint_token: str
+        :param id_token_hint: ID token previously issued for the end user
+        :type id_token_hint: str
+        :param scope: Scope of the authorization request, split with a blank space
+        :type scope: str
+        :param binding_message: Message shown to the user on both devices
+        :type binding_message: str
+        :param requested_expiry: Requested lifetime of the auth_req_id in seconds
+        :type requested_expiry: int
+        :param extra: Additional extra arguments
+        :type extra: dict
+        :returns: Backchannel authentication response containing auth_req_id,
+            expires_in and interval
+        :rtype: dict
+        :raises ValueError: If none of the user identification hints is provided
+        """
+        hints = [login_hint, login_hint_token, id_token_hint]
+        if not any(hints):
+            msg = (
+                "One of 'login_hint', 'login_hint_token' or 'id_token_hint' is required "
+                "to start a CIBA authentication."
+            )
+            raise ValueError(msg)
+
+        params_path = {"realm-name": self.realm_name}
+        payload: dict[str, Any] = {"client_id": self.client_id, "scope": scope}
+        if login_hint is not None:
+            payload["login_hint"] = login_hint
+        if login_hint_token is not None:
+            payload["login_hint_token"] = login_hint_token
+        if id_token_hint is not None:
+            payload["id_token_hint"] = id_token_hint
+        if binding_message is not None:
+            payload["binding_message"] = binding_message
+        if requested_expiry is not None:
+            payload["requested_expiry"] = requested_expiry
+        if extra:
+            payload.update(extra)
+
+        payload = self._add_secret_key(payload)
+        data_raw = await self.connection.a_raw_post(URL_CIBA.format(**params_path), data=payload)
+        res = raise_error_from_response(data_raw, KeycloakPostError)
+        if not isinstance(res, dict):
+            msg = (
+                "Unexpected response type from 'a_ciba'. Expected 'dict', received "
                 f"'{type(res)}', value '{res}'."
             )
             raise TypeError(msg)
