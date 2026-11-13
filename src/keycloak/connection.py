@@ -345,7 +345,13 @@ class ConnectionManager:
             msg = "Can't connect to server"
             raise KeycloakConnectionError(msg) from e
 
-    def raw_post(self, path: str, data: dict | str | MultipartEncoder, **kwargs: Any) -> Response:  # noqa: ANN401
+    def raw_post(
+        self,
+        path: str,
+        data: dict | str | MultipartEncoder,
+        headers: dict | None = None,
+        **kwargs: Any,  # noqa: ANN401
+    ) -> Response:
         """
         Submit post request to the path.
 
@@ -353,6 +359,8 @@ class ConnectionManager:
         :type path: str
         :param data: Payload for request.
         :type data: dict | str | MultipartEncoder
+        :param headers: Per-request header overrides merged over the connection headers.
+        :type headers: dict
         :param kwargs: Additional arguments
         :type kwargs: dict
         :returns: Response the request.
@@ -367,7 +375,7 @@ class ConnectionManager:
                 urljoin(self.base_url, path),
                 params=kwargs,
                 data=data,
-                headers=self.headers,
+                headers={**self.headers, **headers} if headers else self.headers,
                 timeout=self.timeout,
                 verify=self.verify,
                 cert=self.cert,
@@ -471,6 +479,7 @@ class ConnectionManager:
         self,
         path: str,
         data: dict | str | MultipartEncoder,
+        headers: dict | None = None,
         **kwargs: Any,  # noqa: ANN401
     ) -> AsyncResponse:
         """
@@ -480,6 +489,8 @@ class ConnectionManager:
         :type path: str
         :param data: Payload for request.
         :type data: dict | str | MultipartEncoder
+        :param headers: Per-request header overrides merged over the connection headers.
+        :type headers: dict
         :param kwargs: Additional arguments
         :type kwargs: dict
         :returns: Response the request.
@@ -496,7 +507,7 @@ class ConnectionManager:
                 url=urljoin(self.base_url, path),
                 params=self._filter_query_params(kwargs),
                 **self._prepare_httpx_request_content(data),
-                headers=self.headers,
+                headers={**self.headers, **headers} if headers else self.headers,
                 timeout=self.timeout,
             )
         except Exception as e:

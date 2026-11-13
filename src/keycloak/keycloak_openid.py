@@ -36,6 +36,13 @@ from typing import Any
 import aiofiles
 from jwcrypto import jwk, jwt
 
+from ._auth_requests import (
+    FormRequest,
+    build_exchange_token_request,
+    build_introspection_request,
+    build_refresh_token_request,
+    build_token_request,
+)
 from .authorization import Authorization
 from .connection import ConnectionManager
 from .exceptions import (
@@ -62,7 +69,6 @@ from .urls_patterns import (
     URL_CLIENT_UPDATE,
     URL_DEVICE,
     URL_ENTITLEMENT,
-    URL_INTROSPECT,
     URL_LOGOUT,
     URL_REALM,
     URL_TOKEN,
@@ -236,6 +242,114 @@ class KeycloakOpenID:
 
         return payload
 
+    def _form_request_headers(
+        self,
+        request: FormRequest,
+        bearer_token: str | None,
+    ) -> dict:
+        """
+        Build the per-request header overrides for a form request.
+
+        Headers are never written onto the shared connection manager, so concurrent
+        callers cannot observe or inherit each other's credentials.
+
+        :param request: Form request description
+        :type request: FormRequest
+        :param bearer_token: User token to send as bearer authentication, if required
+        :type bearer_token: str | None
+        :returns: Header overrides for this request
+        :rtype: dict
+        """
+        headers = {}
+        if request.content_type:
+            headers["Content-Type"] = request.content_type
+        if request.bearer_auth:
+            if bearer_token is None:
+                msg = "Can't find bearer token"
+                raise KeycloakRPTNotFound(msg)
+            headers["Authorization"] = "Bearer " + bearer_token
+        return headers
+
+    @staticmethod
+    def _response_as_dict(res: bytes | dict | list, operation: str) -> dict:
+        """
+        Validate that a form response is a JSON object.
+
+        :param res: Response body
+        :type res: bytes | dict | list
+        :param operation: Operation name used in the error message
+        :type operation: str
+        :returns: Response as a dictionary
+        :rtype: dict
+        :raises TypeError: If the response is not a dictionary
+        """
+        if not isinstance(res, dict):
+            msg = (
+                f"Unexpected response type from '{operation}'. Expected 'dict', received "
+                f"'{type(res)}', value '{res}'."
+            )
+            raise TypeError(msg)
+
+        return res
+
+    def _execute_form_request(
+        self,
+        request: FormRequest,
+        operation: str,
+        bearer_token: str | None = None,
+    ) -> dict:
+        """
+        Send a form request over the synchronous transport.
+
+        :param request: Form request description
+        :type request: FormRequest
+        :param operation: Operation name used in error messages
+        :type operation: str
+        :param bearer_token: User token to send as bearer authentication, if required
+        :type bearer_token: str | None
+        :returns: Response as a dictionary
+        :rtype: dict
+        """
+        headers = self._form_request_headers(request, bearer_token)
+        data_raw = self.connection.raw_post(
+            request.path,
+            data=dict(request.form),
+            headers=headers,
+        )
+        return self._response_as_dict(
+            raise_error_from_response(data_raw, KeycloakPostError),
+            operation,
+        )
+
+    async def _a_execute_form_request(
+        self,
+        request: FormRequest,
+        operation: str,
+        bearer_token: str | None = None,
+    ) -> dict:
+        """
+        Send a form request over the asynchronous transport.
+
+        :param request: Form request description
+        :type request: FormRequest
+        :param operation: Operation name used in error messages
+        :type operation: str
+        :param bearer_token: User token to send as bearer authentication, if required
+        :type bearer_token: str | None
+        :returns: Response as a dictionary
+        :rtype: dict
+        """
+        headers = self._form_request_headers(request, bearer_token)
+        data_raw = await self.connection.a_raw_post(
+            request.path,
+            data=dict(request.form),
+            headers=headers,
+        )
+        return self._response_as_dict(
+            raise_error_from_response(data_raw, KeycloakPostError),
+            operation,
+        )
+
     def _build_name_role(self, role: str) -> str:
         """
         Build name of a role.
@@ -375,42 +489,21 @@ class KeycloakOpenID:
         :returns: Keycloak token
         :rtype: dict
         """
-        params_path = {"realm-name": self.realm_name}
-        payload = {
-            "username": username,
-            "password": password,
-            "client_id": self.client_id,
-            "grant_type": grant_type,
-            "code": code,
-            "redirect_uri": redirect_uri,
-            "scope": scope,
-        }
-        if code_verifier:
-            payload["code_verifier"] = code_verifier
-        if extra:
-            payload.update(extra)
-
-        if totp:
-            payload["totp"] = totp
-
-        payload = self._add_secret_key(payload)
-        content_type = (self.connection.headers or {}).get("Content-Type")
-        self.connection.add_param_headers("Content-Type", "application/x-www-form-urlencoded")
-        data_raw = self.connection.raw_post(URL_TOKEN.format(**params_path), data=payload)
-        (
-            self.connection.add_param_headers("Content-Type", content_type)
-            if content_type
-            else self.connection.del_param_headers("Content-Type")
+        request = build_token_request(
+            realm_name=self.realm_name,
+            client_id=self.client_id,
+            client_secret=self.client_secret_key,
+            username=username,
+            password=password,
+            grant_type=grant_type,
+            code=code,
+            redirect_uri=redirect_uri,
+            totp=totp,
+            scope=scope,
+            code_verifier=code_verifier,
+            extra=extra,
         )
-        res = raise_error_from_response(data_raw, KeycloakPostError)
-        if not isinstance(res, dict):
-            msg = (
-                f"Unexpected response type from 'token'. Expected 'dict', received '{type(res)}'"
-                f", value {res}."
-            )
-            raise TypeError(msg)
-
-        return res
+        return self._execute_form_request(request, "token")
 
     def refresh_token(self, refresh_token: str, grant_type: str = "refresh_token") -> dict:
         """
@@ -430,31 +523,14 @@ class KeycloakOpenID:
         :returns: New token
         :rtype: dict
         """
-        params_path = {"realm-name": self.realm_name}
-        payload = {
-            "client_id": self.client_id,
-            "grant_type": grant_type,
-            "refresh_token": refresh_token,
-        }
-        payload = self._add_secret_key(payload)
-        content_type = (self.connection.headers or {}).get("Content-Type")
-        self.connection.add_param_headers("Content-Type", "application/x-www-form-urlencoded")
-        data_raw = self.connection.raw_post(URL_TOKEN.format(**params_path), data=payload)
-        (
-            self.connection.add_param_headers("Content-Type", content_type)
-            if content_type
-            else self.connection.del_param_headers("Content-Type")
+        request = build_refresh_token_request(
+            realm_name=self.realm_name,
+            client_id=self.client_id,
+            client_secret=self.client_secret_key,
+            refresh_token=refresh_token,
+            grant_type=grant_type,
         )
-        res = raise_error_from_response(data_raw, KeycloakPostError)
-        if not isinstance(res, dict):
-            msg = (
-                "Unexpected response type from refresh_token. "
-                f"Expected 'dict', received '{type(res)}'"
-                f", value: {res}."
-            )
-            raise TypeError(msg)
-
-        return res
+        return self._execute_form_request(request, "refresh_token")
 
     def exchange_token(
         self,
@@ -492,37 +568,20 @@ class KeycloakOpenID:
         :returns: Exchanged token
         :rtype: dict
         """
-        params_path = {"realm-name": self.realm_name}
-        payload = {
-            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-            "client_id": self.client_id,
-            "subject_token": token,
-            "subject_token_type": subject_token_type,
-            "subject_issuer": subject_issuer,
-            "requested_token_type": requested_token_type,
-            "audience": audience,
-            "requested_subject": subject,
-            "requested_issuer": requested_issuer,
-            "scope": scope,
-        }
-        payload = self._add_secret_key(payload)
-        content_type = (self.connection.headers or {}).get("Content-Type")
-        self.connection.add_param_headers("Content-Type", "application/x-www-form-urlencoded")
-        data_raw = self.connection.raw_post(URL_TOKEN.format(**params_path), data=payload)
-        (
-            self.connection.add_param_headers("Content-Type", content_type)
-            if content_type
-            else self.connection.del_param_headers("Content-Type")
+        request = build_exchange_token_request(
+            realm_name=self.realm_name,
+            client_id=self.client_id,
+            client_secret=self.client_secret_key,
+            token=token,
+            audience=audience,
+            subject=subject,
+            subject_token_type=subject_token_type,
+            subject_issuer=subject_issuer,
+            requested_issuer=requested_issuer,
+            requested_token_type=requested_token_type,
+            scope=scope,
         )
-        res = raise_error_from_response(data_raw, KeycloakPostError)
-        if not isinstance(res, dict):
-            msg = (
-                "Unexpected response type from exchange_token. Expected 'dict', received "
-                f"'{type(res)}', value '{res}'"
-            )
-            raise TypeError(msg)
-
-        return res
+        return self._execute_form_request(request, "exchange_token")
 
     def userinfo(self, token: str) -> dict | bytes:
         """
@@ -702,40 +761,15 @@ class KeycloakOpenID:
         :rtype: dict
         :raises KeycloakRPTNotFound: In case of RPT not specified
         """
-        params_path = {"realm-name": self.realm_name}
-        payload = {"client_id": self.client_id, "token": token}
-
-        bearer_changed = False
-        orig_bearer = None
-        if token_type_hint == "requesting_party_token":  # noqa: S105
-            if rpt:
-                payload.update({"token": rpt, "token_type_hint": token_type_hint})
-                orig_bearer = (self.connection.headers or {}).get("Authorization")
-                self.connection.add_param_headers("Authorization", "Bearer " + token)
-                bearer_changed = True
-            else:
-                msg = "Can't find RPT"
-                raise KeycloakRPTNotFound(msg)
-
-        payload = self._add_secret_key(payload)
-
-        data_raw = self.connection.raw_post(URL_INTROSPECT.format(**params_path), data=payload)
-        if bearer_changed:
-            (
-                self.connection.add_param_headers("Authorization", orig_bearer)
-                if orig_bearer is not None
-                else self.connection.del_param_headers("Authorization")
-            )
-
-        res = raise_error_from_response(data_raw, KeycloakPostError)
-        if not isinstance(res, dict):
-            msg = (
-                "Unexpected response type. Expected 'dict', received "
-                f"'{type(res)}', value '{res}'."
-            )
-            raise TypeError(msg)
-
-        return res
+        request = build_introspection_request(
+            realm_name=self.realm_name,
+            client_id=self.client_id,
+            client_secret=self.client_secret_key,
+            token=token,
+            rpt=rpt,
+            token_type_hint=token_type_hint,
+        )
+        return self._execute_form_request(request, "introspect", bearer_token=token)
 
     @staticmethod
     def _verify_token(token: str, key: jwk.JWK | jwk.JWKSet | None, **kwargs: Any) -> dict:  # noqa: ANN401
@@ -1263,42 +1297,21 @@ class KeycloakOpenID:
         :returns: Keycloak token
         :rtype: dict
         """
-        params_path = {"realm-name": self.realm_name}
-        payload = {
-            "username": username,
-            "password": password,
-            "client_id": self.client_id,
-            "grant_type": grant_type,
-            "code": code,
-            "redirect_uri": redirect_uri,
-            "scope": scope,
-        }
-        if code_verifier:
-            payload["code_verifier"] = code_verifier
-        if extra:
-            payload.update(extra)
-
-        if totp:
-            payload["totp"] = totp
-
-        payload = self._add_secret_key(payload)
-        content_type = (self.connection.headers or {}).get("Content-Type")
-        self.connection.add_param_headers("Content-Type", "application/x-www-form-urlencoded")
-        data_raw = await self.connection.a_raw_post(URL_TOKEN.format(**params_path), data=payload)
-        (
-            self.connection.add_param_headers("Content-Type", content_type)
-            if content_type
-            else self.connection.del_param_headers("Content-Type")
+        request = build_token_request(
+            realm_name=self.realm_name,
+            client_id=self.client_id,
+            client_secret=self.client_secret_key,
+            username=username,
+            password=password,
+            grant_type=grant_type,
+            code=code,
+            redirect_uri=redirect_uri,
+            totp=totp,
+            scope=scope,
+            code_verifier=code_verifier,
+            extra=extra,
         )
-        res = raise_error_from_response(data_raw, KeycloakPostError)
-        if not isinstance(res, dict):
-            msg = (
-                "Unexpected response type. Expected 'dict', received "
-                f"'{type(res)}', value '{res}'."
-            )
-            raise TypeError(msg)
-
-        return res
+        return await self._a_execute_form_request(request, "token")
 
     async def a_refresh_token(self, refresh_token: str, grant_type: str = "refresh_token") -> dict:
         """
@@ -1318,30 +1331,14 @@ class KeycloakOpenID:
         :returns: New token
         :rtype: dict
         """
-        params_path = {"realm-name": self.realm_name}
-        payload = {
-            "client_id": self.client_id,
-            "grant_type": grant_type,
-            "refresh_token": refresh_token,
-        }
-        payload = self._add_secret_key(payload)
-        content_type = (self.connection.headers or {}).get("Content-Type")
-        self.connection.add_param_headers("Content-Type", "application/x-www-form-urlencoded")
-        data_raw = await self.connection.a_raw_post(URL_TOKEN.format(**params_path), data=payload)
-        (
-            self.connection.add_param_headers("Content-Type", content_type)
-            if content_type
-            else self.connection.del_param_headers("Content-Type")
+        request = build_refresh_token_request(
+            realm_name=self.realm_name,
+            client_id=self.client_id,
+            client_secret=self.client_secret_key,
+            refresh_token=refresh_token,
+            grant_type=grant_type,
         )
-        res = raise_error_from_response(data_raw, KeycloakPostError)
-        if not isinstance(res, dict):
-            msg = (
-                "Unexpected response type. Expected 'dict', received "
-                f"'{type(res)}', value '{res}'."
-            )
-            raise TypeError(msg)
-
-        return res
+        return await self._a_execute_form_request(request, "refresh_token")
 
     async def a_exchange_token(
         self,
@@ -1379,37 +1376,20 @@ class KeycloakOpenID:
         :returns: Exchanged token
         :rtype: dict
         """
-        params_path = {"realm-name": self.realm_name}
-        payload = {
-            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-            "client_id": self.client_id,
-            "subject_token": token,
-            "subject_token_type": subject_token_type,
-            "subject_issuer": subject_issuer,
-            "requested_token_type": requested_token_type,
-            "audience": audience,
-            "requested_subject": subject,
-            "requested_issuer": requested_issuer,
-            "scope": scope,
-        }
-        payload = self._add_secret_key(payload)
-        content_type = (self.connection.headers or {}).get("Content-Type")
-        self.connection.add_param_headers("Content-Type", "application/x-www-form-urlencoded")
-        data_raw = await self.connection.a_raw_post(URL_TOKEN.format(**params_path), data=payload)
-        (
-            self.connection.add_param_headers("Content-Type", content_type)
-            if content_type
-            else self.connection.del_param_headers("Content-Type")
+        request = build_exchange_token_request(
+            realm_name=self.realm_name,
+            client_id=self.client_id,
+            client_secret=self.client_secret_key,
+            token=token,
+            audience=audience,
+            subject=subject,
+            subject_token_type=subject_token_type,
+            subject_issuer=subject_issuer,
+            requested_issuer=requested_issuer,
+            requested_token_type=requested_token_type,
+            scope=scope,
         )
-        res = raise_error_from_response(data_raw, KeycloakPostError)
-        if not isinstance(res, dict):
-            msg = (
-                "Unexpected response type. Expected 'dict', received "
-                f"'{type(res)}', value '{res}'."
-            )
-            raise TypeError(msg)
-
-        return res
+        return await self._a_execute_form_request(request, "exchange_token")
 
     async def a_userinfo(self, token: str) -> dict | bytes:
         """
@@ -1590,42 +1570,15 @@ class KeycloakOpenID:
         :rtype: dict
         :raises KeycloakRPTNotFound: In case of RPT not specified
         """
-        params_path = {"realm-name": self.realm_name}
-        payload = {"client_id": self.client_id, "token": token}
-
-        orig_bearer = None
-        bearer_changed = False
-        if token_type_hint == "requesting_party_token":  # noqa: S105
-            if rpt:
-                payload.update({"token": rpt, "token_type_hint": token_type_hint})
-                orig_bearer = (self.connection.headers or {}).get("Authorization")
-                self.connection.add_param_headers("Authorization", "Bearer " + token)
-                bearer_changed = True
-            else:
-                msg = "Can't find RPT."
-                raise KeycloakRPTNotFound(msg)
-
-        payload = self._add_secret_key(payload)
-
-        data_raw = await self.connection.a_raw_post(
-            URL_INTROSPECT.format(**params_path),
-            data=payload,
+        request = build_introspection_request(
+            realm_name=self.realm_name,
+            client_id=self.client_id,
+            client_secret=self.client_secret_key,
+            token=token,
+            rpt=rpt,
+            token_type_hint=token_type_hint,
         )
-        if bearer_changed:
-            (
-                self.connection.add_param_headers("Authorization", orig_bearer)
-                if orig_bearer is not None
-                else self.connection.del_param_headers("Authorization")
-            )
-        res = raise_error_from_response(data_raw, KeycloakPostError)
-        if not isinstance(res, dict):
-            msg = (
-                "Unexpected response type. Expected 'dict', received "
-                f"'{type(res)}', value '{res}'."
-            )
-            raise TypeError(msg)
-
-        return res
+        return await self._a_execute_form_request(request, "introspect", bearer_token=token)
 
     async def a_decode_token(self, token: str, validate: bool = True, **kwargs: Any) -> dict:  # noqa: ANN401
         """
